@@ -5,9 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Maze Solver</title>
     <meta name="description" content="迷路生成と迷路解法アルゴリズムをブラウザで可視化するアプリ">
-    <link rel="stylesheet" href="styles.css?v=20260620">
+    <link rel="stylesheet" href="styles.css?v=20260805-lab">
   </head>
   <body>
+    <nav class="tabbar" aria-label="機能の切り替え">
+      <div role="tablist" aria-label="機能の切り替え">
+        <button id="tabViz" type="button" role="tab" aria-selected="true" aria-controls="panelViz">
+          迷路ソルバー
+        </button>
+        <button id="tabLab" type="button" role="tab" aria-selected="false" aria-controls="panelLab" tabindex="-1">
+          DFS-N 研究ラボ
+        </button>
+      </div>
+    </nav>
+
+    <div id="panelViz" role="tabpanel" aria-labelledby="tabViz">
     <main class="app-shell">
       <section class="board-panel" aria-label="迷路">
         <header class="topbar">
@@ -230,7 +242,215 @@
         </section>
       </aside>
     </main>
+    </div><!-- /#panelViz -->
 
-    <script src="app.js?v=20260620"></script>
+    <div id="panelLab" role="tabpanel" aria-labelledby="tabLab" hidden>
+      <main class="app-shell">
+        <section class="board-panel" aria-label="実験用迷路">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Research Lab</p>
+              <h1>DFS-N × 偏在報酬</h1>
+            </div>
+            <div class="status-strip" aria-live="polite">
+              <span id="labStatus">待機中</span>
+            </div>
+          </header>
+
+          <p class="lab-lead">
+            探索優先順位を方位で偏らせた深さ優先探索（<strong>DFS-N</strong>）が、
+            報酬の偏在する領域と方位が一致するとき BFS より少ない探索コストで報酬を回収するか、
+            そして同じ効果が未知環境を走るマイクロマウス型でも成立するかを検証します。
+          </p>
+
+          <div class="canvas-wrap">
+            <canvas id="labCanvas" aria-label="実験用迷路と報酬配置"></canvas>
+          </div>
+
+          <ul class="lab-legend">
+            <li><span class="swatch swatch--circle" style="background:#10b981"></span>探索開始点</li>
+            <li><span class="swatch swatch--diamond" style="background:#7c3aed"></span>報酬</li>
+            <li><span class="swatch swatch--ring" style="border-color:#f97316"></span>報酬領域</li>
+            <li><span class="swatch" style="background:#f97316"></span>バイアス方位</li>
+            <li><span class="swatch swatch--grad"></span>探索順（早い→遅い）</li>
+            <li><span class="swatch" style="background:#0ea5e9"></span>マイクロマウス走行</li>
+          </ul>
+          <p class="field-help">迷路をクリックすると、その位置を報酬領域の中心にして再実行します。</p>
+        </section>
+
+        <aside class="control-panel" aria-label="実験の設定">
+          <section class="panel-block">
+            <p class="block-title">① 迷路</p>
+            <div class="field-row">
+              <label for="labSize">サイズ</label>
+              <select id="labSize">
+                <option value="33x33">33 x 33（16×16 マイクロマウス相当）</option>
+                <option value="51x51" selected>51 x 51</option>
+                <option value="61x61">61 x 61</option>
+                <option value="81x61">81 x 61</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="labBraid">ループ率 <output id="labBraidValue">0%</output></label>
+              <input id="labBraid" type="range" min="0" max="60" step="5" value="0">
+            </div>
+            <div class="field-row">
+              <label for="labSeed">シード</label>
+              <input id="labSeed" type="text" inputmode="numeric" placeholder="空欄=ランダム" value="20260805">
+            </div>
+            <div class="field-row">
+              <label for="labStartMode">探索開始点</label>
+              <select id="labStartMode">
+                <option value="center" selected>中央</option>
+                <option value="bottomLeft">左下</option>
+                <option value="topLeft">左上</option>
+                <option value="bottomRight">右下</option>
+                <option value="auto">自動（最遠点）</option>
+              </select>
+            </div>
+            <p class="field-help">方位バイアスの意味を明確にするため、既定は中央から探索します。実験は 1 階層（2D）固定です。</p>
+          </section>
+
+          <section class="panel-block">
+            <p class="block-title">② 報酬の偏在</p>
+            <div class="field-row">
+              <label for="labRewardCount">報酬の数</label>
+              <input id="labRewardCount" type="number" min="4" max="200" step="1" value="40">
+            </div>
+            <div class="field-row">
+              <label for="labConcentration">領域内の割合 <output id="labConcentrationValue">85%</output></label>
+              <input id="labConcentration" type="range" min="0" max="100" step="5" value="85"
+                     aria-describedby="labConcentrationHelp">
+            </div>
+            <p id="labConcentrationHelp" class="field-help">0% にすると一様分布（対照条件）になり、偏在に由来する効果かどうかを確かめられます。</p>
+
+            <div class="field-row">
+              <label for="labRegionX">領域 中心X <output id="labRegionXValue">80%</output></label>
+              <input id="labRegionX" type="range" min="0" max="100" step="1" value="80">
+            </div>
+            <div class="field-row">
+              <label for="labRegionY">領域 中心Y <output id="labRegionYValue">20%</output></label>
+              <input id="labRegionY" type="range" min="0" max="100" step="1" value="20">
+            </div>
+            <div class="field-row">
+              <label for="labRegionR">領域 半径 <output id="labRegionRValue">22%</output></label>
+              <input id="labRegionR" type="range" min="5" max="60" step="1" value="22">
+            </div>
+            <div class="preset-grid" role="group" aria-label="領域のプリセット">
+              <button type="button" data-region-preset="20,20">左上</button>
+              <button type="button" data-region-preset="80,20">右上</button>
+              <button type="button" data-region-preset="50,50">中央</button>
+              <button type="button" data-region-preset="20,80">左下</button>
+              <button type="button" data-region-preset="80,80">右下</button>
+            </div>
+          </section>
+
+          <section class="panel-block">
+            <p class="block-title">③ DFS-N の探索優先方位</p>
+            <div class="field-row">
+              <label for="labBias">バイアス角 <output id="labBiasValue">45°</output></label>
+              <input id="labBias" type="range" min="0" max="345" step="15" value="45"
+                     aria-describedby="labBiasHelp">
+            </div>
+            <p id="labBiasHelp" class="field-help">0°=右、90°=上、反時計回り。45° は「右上を優先」の意味です。</p>
+            <button id="labMatchButton" type="button" class="compare-button">バイアスを報酬領域の方位に合わせる</button>
+          </section>
+
+          <section class="panel-block">
+            <p class="block-title">④ 実行</p>
+            <div class="field-row">
+              <label for="labHeatSelect">迷路の塗り</label>
+              <select id="labHeatSelect">
+                <option value="dfsn" selected>DFS-N の探索順</option>
+                <option value="bfs">BFS の探索順</option>
+                <option value="dfs">DFS の探索順</option>
+                <option value="greedy">Greedy-領域 の探索順</option>
+                <option value="none">塗らない</option>
+              </select>
+            </div>
+            <button id="labRunButton" type="button" class="compare-button">単発試行を実行（図1・表1）</button>
+
+            <div class="field-row">
+              <label for="labSweepSeeds">シード数</label>
+              <input id="labSweepSeeds" type="number" min="1" max="40" step="1" value="8">
+            </div>
+            <button id="labSweepButton" type="button" class="compare-button">バイアス角スイープ（図2・表3）</button>
+
+            <div class="field-row">
+              <label for="labMmLambda">誘導強度 λ <output id="labMmLambdaValue">2.0</output></label>
+              <input id="labMmLambda" type="range" min="0.5" max="6" step="0.5" value="2">
+            </div>
+            <div class="field-row">
+              <label for="labGoalPlacement">ゴール配置</label>
+              <select id="labGoalPlacement">
+                <option value="inside" selected>領域内（事前情報が正しい）</option>
+                <option value="outside">領域外（事前情報が誤り）</option>
+              </select>
+            </div>
+            <button id="labMmButton" type="button" class="compare-button">マイクロマウス検証（図3・表2）</button>
+
+            <div id="labProgress" class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden>
+              <div id="labProgressBar" class="progress-bar"></div>
+            </div>
+            <div class="export-row">
+              <button id="labSweepCsv" type="button" class="export-button" disabled>スイープ CSV</button>
+              <button id="labMmCsv" type="button" class="export-button" disabled>マイクロマウス CSV</button>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <section class="lab-figures" aria-label="実験結果">
+        <figure class="lab-figure">
+          <figcaption>
+            <strong>図1</strong> 報酬回収曲線（単発試行）
+            <span>横軸は展開セル数、縦軸は回収率。左上に張り出すほど「少ない探索で多く回収」。</span>
+          </figcaption>
+          <canvas id="labCurveCanvas" aria-label="報酬回収曲線"></canvas>
+        </figure>
+
+        <div id="labTable" class="lab-table-wrap"></div>
+
+        <figure class="lab-figure">
+          <figcaption>
+            <strong>図2</strong> バイアス角スイープ（極座標）
+            <span>各方位での DFS-N の nAUC。破線円が BFS の等方ベースライン。橙の直線が報酬領域の実方位。
+            動径軸は 0 始まりではありません（リングの数値を参照）。</span>
+          </figcaption>
+          <canvas id="labPolarCanvas" aria-label="バイアス角ごとの nAUC を示す極座標チャート"></canvas>
+        </figure>
+
+        <div id="labSweepNote" class="lab-table-wrap"></div>
+
+        <figure class="lab-figure">
+          <figcaption>
+            <strong>図3</strong> マイクロマウス型の比較（単位は実移動歩数）
+            <span>未知迷路を走るロボットのコストは走行距離。全知探索（図1・図2）の展開セル数とは単位が異なるため、
+            数値を直接比較してはいけません。</span>
+          </figcaption>
+          <canvas id="labMmCanvas" aria-label="マイクロマウスの無情報と領域誘導の比較棒グラフ"></canvas>
+        </figure>
+
+        <div id="labMmTable" class="lab-table-wrap"></div>
+
+        <details class="lab-notes">
+          <summary>この実験の読み方と限界</summary>
+          <ul>
+            <li><strong>コスト単位</strong>: 全知探索（BFS/DFS/DFS-N/Greedy）は「展開セル数」、マイクロマウスは「実移動歩数」。
+              BFS の展開順は単一エージェントの移動として物理的に実現できないため、歩数では比較できません。</li>
+            <li><strong>nAUC</strong>: 回収曲線の下面積（0〜1）。大きいほど早く回収したことを意味します。
+              単一しきい値（50% 到達など）より配置のゆらぎに強く、複数シードの平均比較に向きます。</li>
+            <li><strong>DFS-N は最短経路を保証しません</strong>。本実験が問うのは報酬回収の早さだけです。</li>
+            <li><strong>Greedy-領域は参考上限</strong>。DFS-N と同じ事前情報をより直接的に使うため、
+              DFS-N を上回ることがあります。提案の主張は「BFS より良い」であって「最良である」ではありません。</li>
+            <li><strong>事前情報が誤っていれば誘導は逆効果</strong>。「ゴール配置: 領域外」で実際に測れます。</li>
+            <li>迷路は 1 階層（2D）固定です。多階層の可視化は「迷路ソルバー」タブを使ってください。</li>
+          </ul>
+        </details>
+      </section>
+    </div><!-- /#panelLab -->
+
+    <script src="app.js?v=20260805-lab"></script>
+    <script src="lab.js?v=20260805-lab"></script>
   </body>
 </html>

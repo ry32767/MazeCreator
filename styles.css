@@ -588,3 +588,312 @@ input[type="range"] {
     grid-template-columns: 1fr;
   }
 }
+
+/* ===========================================================================
+   タブ（迷路ソルバー / DFS-N 研究ラボ）
+   =========================================================================== */
+
+.tabbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.tabbar > div {
+  width: min(1420px, calc(100vw - 32px));
+  margin: 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 8px 0 0;
+}
+
+.tabbar button {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.tabbar button:hover:not([aria-selected="true"]) {
+  transform: none;
+  background: var(--button-alt);
+  color: var(--text);
+}
+
+.tabbar button[aria-selected="true"] {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: 0 -6px 18px rgba(27, 36, 56, 0.06);
+}
+
+[role="tabpanel"] .app-shell {
+  min-height: 0;
+}
+
+[role="tabpanel"] .control-panel {
+  top: 68px;
+}
+
+/* ===========================================================================
+   DFS-N 研究ラボ
+   =========================================================================== */
+
+.lab-lead {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--focus);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.lab-lead strong {
+  color: var(--text);
+}
+
+.lab-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.lab-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  vertical-align: -2px;
+  margin-right: 6px;
+  flex: none;
+}
+
+.swatch--circle {
+  border-radius: 50%;
+}
+
+.swatch--diamond {
+  border-radius: 2px;
+  transform: rotate(45deg);
+  width: 10px;
+  height: 10px;
+}
+
+.swatch--ring {
+  background: transparent;
+  border: 2px dashed;
+  border-radius: 50%;
+}
+
+.swatch--grad {
+  background: linear-gradient(90deg, hsl(210, 85%, 62%), hsl(105, 85%, 62%), hsl(0, 85%, 62%));
+  width: 40px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.preset-grid button {
+  min-height: 34px;
+  background: var(--button-alt);
+  color: var(--button-alt-text);
+  font-size: 0.8rem;
+}
+
+/* 狭い画面では迷路を縮小して収める。クリック座標は表示幅で正規化してから
+   セル座標へ戻すので、縮小しても領域中心の指定はずれない。 */
+#labCanvas {
+  display: block;
+  max-width: 100%;
+  cursor: crosshair;
+}
+
+/* --- 図表 --- */
+
+.lab-figures {
+  width: min(1420px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 0 0 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.lab-figure,
+.lab-table-wrap,
+.lab-notes {
+  margin: 0;
+  /* グリッドアイテムの既定 min-width:auto は min-content。表の見出しは折り返さない
+     ため、これを 0 にしないと列がカードごと画面幅を超えて広がる。 */
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+  box-shadow: 0 10px 28px rgba(27, 36, 56, 0.08);
+}
+
+/* 表が入りきらない幅ではカードの中だけを横スクロールさせ、ページ本体は横に
+   はみ出さないようにする。 */
+.lab-table-wrap {
+  overflow-x: auto;
+}
+
+.lab-table-wrap:empty {
+  display: none;
+}
+
+.lab-figure figcaption {
+  margin-bottom: 10px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.lab-figure figcaption span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 550;
+  line-height: 1.6;
+}
+
+.lab-figure canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.lab-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.lab-table caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.5;
+  padding-bottom: 8px;
+}
+
+.lab-table th,
+.lab-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.lab-table thead th {
+  border-bottom: 2px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.lab-table tbody th {
+  font-weight: 700;
+}
+
+.lab-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lab-table .sd {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.lab-table .good {
+  color: #047857;
+}
+
+.lab-table .bad {
+  color: var(--danger);
+}
+
+.lab-notes summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.lab-notes ul {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.75;
+}
+
+.lab-notes li + li {
+  margin-top: 6px;
+}
+
+.lab-notes strong {
+  color: var(--text);
+}
+
+@media (max-width: 1040px) {
+  .lab-figures {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .tabbar > div,
+  .lab-figures {
+    width: min(100vw - 20px, 640px);
+  }
+
+  .tabbar button {
+    flex: 1;
+    padding: 0 8px;
+    font-size: 0.84rem;
+  }
+
+  [role="tabpanel"] .control-panel {
+    top: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabbar button {
+    transition: none;
+  }
+}

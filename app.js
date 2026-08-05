@@ -3087,6 +3087,8 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     state,
     MinHeap,
+    DIRECTIONS,
+    clamp,
     keyFromXYZ,
     posKey,
     posFromKey,
