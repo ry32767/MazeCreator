@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Maze Solver</title>
     <meta name="description" content="迷路生成と迷路解法アルゴリズムをブラウザで可視化するアプリ">
-    <link rel="stylesheet" href="styles.css?v=20260805-lab">
+    <link rel="stylesheet" href="styles.css?v=20260806-trials">
   </head>
   <body>
     <nav class="tabbar" aria-label="機能の切り替え">
@@ -371,9 +371,16 @@
             <button id="labRunButton" type="button" class="compare-button">単発試行を実行（図1・表1）</button>
 
             <div class="field-row">
-              <label for="labSweepSeeds">シード数</label>
-              <input id="labSweepSeeds" type="number" min="1" max="40" step="1" value="8">
+              <label for="labSweepSeeds">スイープ試行数</label>
+              <input id="labSweepSeeds" type="number" min="1" max="200" step="1" value="8"
+                     aria-describedby="labSeedCountHelp">
             </div>
+            <p id="labSeedCountHelp" class="field-help">
+              1 試行 = ① のシードから派生した別の迷路 1 つ（最大 200 試行）。
+              増やしても先頭の試行はそのままで後ろに新しい迷路が足されるため、平均の精度だけを積み増せます。
+              ① のシードを変えれば試行の集合ごと入れ替わります。試行数が多いと時間がかかりますが、
+              実行中の「中止」でそこまでの試行だけを集計できます。
+            </p>
             <button id="labSweepButton" type="button" class="compare-button">バイアス角スイープ（図2・表3）</button>
 
             <div class="field-row">
@@ -387,11 +394,17 @@
                 <option value="outside">領域外（事前情報が誤り）</option>
               </select>
             </div>
+            <div class="field-row">
+              <label for="labMmSeeds">マウス試行数</label>
+              <input id="labMmSeeds" type="number" min="1" max="200" step="1" value="8"
+                     aria-describedby="labSeedCountHelp">
+            </div>
             <button id="labMmButton" type="button" class="compare-button">マイクロマウス検証（図3・表2）</button>
 
             <div id="labProgress" class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden>
               <div id="labProgressBar" class="progress-bar"></div>
             </div>
+            <button id="labStopButton" type="button" class="stop-button" hidden>中止（ここまでで集計）</button>
             <div class="export-row">
               <button id="labSweepCsv" type="button" class="export-button" disabled>スイープ CSV</button>
               <button id="labMmCsv" type="button" class="export-button" disabled>マイクロマウス CSV</button>
@@ -450,7 +463,7 @@
       </section>
     </div><!-- /#panelLab -->
 
-    <script src="app.js?v=20260805-lab"></script>
-    <script src="lab.js?v=20260805-lab"></script>
+    <script src="app.js?v=20260806-trials"></script>
+    <script src="lab.js?v=20260806-trials"></script>
   </body>
 </html>

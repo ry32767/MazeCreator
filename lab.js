@@ -1087,7 +1087,9 @@
     mmLambda: el("labMmLambda"),
     mmLambdaOut: el("labMmLambdaValue"),
     goalPlacement: el("labGoalPlacement"),
+    mmSeeds: el("labMmSeeds"),
     mmButton: el("labMmButton"),
+    stopButton: el("labStopButton"),
     progress: el("labProgress"),
     progressBar: el("labProgressBar"),
     csvSweep: el("labSweepCsv"),
@@ -1097,11 +1099,15 @@
 
   if (!ui.canvas) return; // ラボ用 DOM が無いページでは何もしない
 
+  /** 試行数（シード数）の上限。これ以上は 1 回の実行が長くなりすぎる。 */
+  const MAX_SEEDS = 200;
+
   const labState = {
     single: null,
     sweep: null,
     mm: null,
     busy: false,
+    cancel: false,
   };
 
   function setLabStatus(text) {
@@ -1688,7 +1694,7 @@
 
     ui.mmTable.innerHTML = `
       <table class="lab-table">
-        <caption>表2: マイクロマウス型の比較（${study.rows.length} シード、単位は<strong>実移動歩数</strong>）</caption>
+        <caption>表2: マイクロマウス型の比較（${study.rows.length} 試行 / シード、単位は<strong>実移動歩数</strong>）</caption>
         <thead><tr>
           <th scope="col">指標</th>
           <th scope="col">無情報 λ=0</th>
@@ -1725,30 +1731,53 @@
     ui.progressBar.style.width = "0%";
   }
 
-  /** UI を固まらせないよう、重い反復を時間予算で区切って回す。 */
+  /**
+   * UI を固まらせないよう、重い反復を時間予算で区切って回す。
+   * 中止された場合はそこで打ち切り、完了した反復数を返す（部分集計に使う）。
+   */
   async function chunked(count, step, onProgress) {
     let i = 0;
-    while (i < count) {
+    while (i < count && !labState.cancel) {
       const deadline = performance.now() + 24;
-      while (i < count && performance.now() < deadline) {
+      while (i < count && !labState.cancel && performance.now() < deadline) {
         step(i);
         i += 1;
       }
       if (onProgress) onProgress(i, count);
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+    return i;
   }
 
   function setBusy(busy) {
     labState.busy = busy;
+    if (busy) labState.cancel = false;
     [ui.runButton, ui.sweepButton, ui.mmButton].forEach((b) => {
       if (b) b.disabled = busy;
     });
+    if (ui.stopButton) {
+      ui.stopButton.hidden = !busy;
+      ui.stopButton.disabled = !busy;
+    }
   }
 
   function seedList(baseSeed, count) {
     const rand = A.makeRng(baseSeed >>> 0);
     return Array.from({ length: count }, () => Math.floor(rand() * 0xffffffff) >>> 0);
+  }
+
+  /**
+   * 試行数の読み取り。空欄や不正値は既定値に落とし、1〜MAX_SEEDS に丸めて
+   * 入力欄へ書き戻す（丸めた結果が UI と食い違わないように）。
+   */
+  function readSeedCount(input, fallback) {
+    if (!input) return fallback;
+    const text = String(input.value).trim();
+    const raw = Number(text);
+    const count = text !== "" && Number.isFinite(raw) ? Math.round(raw) : fallback;
+    const clamped = A.clamp(count, 1, MAX_SEEDS);
+    input.value = String(clamped);
+    return clamped;
   }
 
   // --- アクション ------------------------------------------------------------
@@ -1774,10 +1803,10 @@
     if (labState.busy) return;
     setBusy(true);
     const cfg = readConfig();
-    const seedCount = A.clamp(Number(ui.sweepSeeds.value), 1, 40);
+    const seedCount = readSeedCount(ui.sweepSeeds, 8);
     const seeds = seedList(cfg.seed, seedCount);
     const angles = Array.from({ length: 16 }, (_, i) => i * 22.5);
-    setLabStatus(`バイアス角スイープ: ${seeds.length} シード × ${angles.length} 方位...`);
+    setLabStatus(`バイアス角スイープ: ${seeds.length} 試行 × ${angles.length} 方位...`);
 
     // シードごとにチャンク実行して進捗を出す。
     const perAngle = angles.map(() => []);
@@ -1785,7 +1814,7 @@
     const bearings = [];
 
     try {
-      await chunked(
+      const done = await chunked(
         seeds.length,
         (i) => {
           const partial = biasSweep(cfg, [seeds[i]], angles);
@@ -1795,11 +1824,16 @@
           }
           bearings.push(partial.bearing);
         },
-        (done, total) => {
-          showProgress(done, total);
-          setLabStatus(`バイアス角スイープ: ${done} / ${total} シード`);
+        (finished, total) => {
+          showProgress(finished, total);
+          setLabStatus(`バイアス角スイープ: ${finished} / ${total} 試行`);
         },
       );
+
+      if (done === 0) {
+        setLabStatus("バイアス角スイープを中止しました（結果なし）");
+        return;
+      }
 
       const bearingStats = meanSd(bearings);
       labState.sweep = {
@@ -1813,13 +1847,14 @@
           Object.entries(baselines).map(([k, v]) => [k, meanSd(v)]),
         ),
         bearing: bearingStats.mean,
-        seeds,
+        seeds: seeds.slice(0, done),
       };
       drawPolarChart();
       renderSweepNote();
       const best = labState.sweep.points.reduce((a, b) => (b.mean > a.mean ? b : a));
+      const head = done < seeds.length ? `スイープ中止（${done}/${seeds.length} 試行）: ` : "スイープ完了: ";
       setLabStatus(
-        `スイープ完了: 最良バイアス ${best.deg}°（領域方位 ${bearingStats.mean.toFixed(0)}° とのずれ ${best.gap.toFixed(0)}°）`,
+        `${head}最良バイアス ${best.deg}°（領域方位 ${bearingStats.mean.toFixed(0)}° とのずれ ${best.gap.toFixed(0)}°）`,
       );
     } finally {
       hideProgress();
@@ -1841,7 +1876,7 @@
 
     ui.sweepNote.innerHTML = `
       <table class="lab-table">
-        <caption>表3: バイアス角スイープの要約（${sweep.seeds.length} シード）</caption>
+        <caption>表3: バイアス角スイープの要約（${sweep.seeds.length} 試行 / シード）</caption>
         <thead><tr><th scope="col">条件</th><th scope="col">nAUC 平均</th><th scope="col">±sd</th><th scope="col">BFS比</th><th scope="col">等方DFS比</th></tr></thead>
         <tbody>
           <tr><th scope="row">DFS-N 最良 ${best.deg}°（ずれ ${best.gap.toFixed(0)}°）</th><td class="num">${best.mean.toFixed(4)}</td><td class="num">${best.sd.toFixed(4)}</td><td class="num good">${rel(best.mean / bfs.mean - 1)}</td><td class="num ${best.mean > dfs.mean ? "good" : "bad"}">${rel(best.mean / dfs.mean - 1)}</td></tr>
@@ -1862,25 +1897,35 @@
     if (labState.busy) return;
     setBusy(true);
     const cfg = readConfig();
-    const seedCount = A.clamp(Number(ui.sweepSeeds.value), 1, 20);
+    const seedCount = readSeedCount(ui.mmSeeds || ui.sweepSeeds, 8);
     const seeds = seedList(cfg.seed ^ 0x1234567, seedCount);
-    setLabStatus(`マイクロマウス検証: ${seeds.length} シード...`);
+    setLabStatus(`マイクロマウス検証: ${seeds.length} 試行...`);
 
     const rows = [];
     try {
-      await chunked(
+      const done = await chunked(
         seeds.length,
         (i) => {
           const part = microMouseStudy(cfg, [seeds[i]]);
           rows.push(...part.rows);
         },
-        (done, total) => {
-          showProgress(done, total);
-          setLabStatus(`マイクロマウス検証: ${done} / ${total} シード`);
+        (finished, total) => {
+          showProgress(finished, total);
+          setLabStatus(`マイクロマウス検証: ${finished} / ${total} 試行`);
         },
       );
 
-      labState.mm = { rows, summary: summariseMm(rows) };
+      if (rows.length === 0) {
+        setLabStatus("マイクロマウス検証を中止しました（結果なし）");
+        return;
+      }
+
+      labState.mm = {
+        rows,
+        summary: summariseMm(rows),
+        cancelled: done < seeds.length,
+        requested: seeds.length,
+      };
       drawMmChart();
       renderMmTable();
 
@@ -1907,8 +1952,11 @@
 
       const s = labState.mm.summary.goalSteps;
       const rel = s.plain.mean !== 0 ? (1 - s.guided.mean / s.plain.mean) * 100 : 0;
+      const head = labState.mm.cancelled
+        ? `マイクロマウス中止（${s.n}/${labState.mm.requested} 試行）: `
+        : "マイクロマウス完了: ";
       setLabStatus(
-        `マイクロマウス完了: 領域誘導のゴール到達歩数は無情報より ` +
+        `${head}領域誘導のゴール到達歩数は無情報より ` +
           `${Math.abs(rel).toFixed(1)}% ${rel >= 0 ? "少ない" : "多い"}` +
           `（勝率 ${s.guidedWins}/${s.n}）`,
       );
@@ -1954,6 +2002,15 @@
     ui.runButton.addEventListener("click", runSingleTrial);
     ui.sweepButton.addEventListener("click", runSweepAction);
     ui.mmButton.addEventListener("click", runMmAction);
+
+    if (ui.stopButton) {
+      ui.stopButton.addEventListener("click", () => {
+        if (!labState.busy) return;
+        labState.cancel = true;
+        ui.stopButton.disabled = true;
+        setLabStatus("中止しています（ここまでの試行で集計します）...");
+      });
+    }
 
     if (ui.heatSelect) ui.heatSelect.addEventListener("change", drawLabMaze);
 

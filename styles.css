@@ -456,6 +456,13 @@ input[type="range"] {
   transition: width 120ms ease;
 }
 
+.stop-button {
+  width: 100%;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 0.82rem;
+}
+
 .export-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
