@@ -67,6 +67,35 @@
 
   const ALGO_ORDER = ["bfs", "dfs", "dfsn", "greedy"];
 
+  /**
+   * Greedy-領域の距離関数。4 近傍格子の障害物なし空間ではグラフ距離が L1 に
+   * 一致するため、L1 が既定（無矛盾なヒューリスティック）。L2 / L∞ は L1 を
+   * 下から押さえる楽観的な指標で、等距離集合の形（菱形／円／正方形）が変わる。
+   */
+  const GREEDY_METRICS = {
+    l1: { label: "マンハッタン L1", short: "L1", fn: (dx, dy) => Math.abs(dx) + Math.abs(dy) },
+    l2: { label: "ユークリッド L2", short: "L2", fn: (dx, dy) => Math.hypot(dx, dy) },
+    linf: {
+      label: "チェビシェフ L∞",
+      short: "L∞",
+      fn: (dx, dy) => Math.max(Math.abs(dx), Math.abs(dy)),
+    },
+  };
+
+  /** 領域の使い方。boundary は縁までの距離（内側は 0）で、マイクロマウスの λ 項と同形。 */
+  const GREEDY_SHAPES = {
+    center: { label: "中心までの距離", short: "中心基準" },
+    boundary: { label: "領域の縁までの距離（内側は 0）", short: "縁基準" },
+  };
+
+  const GREEDY_DEFAULTS = { metric: "l1", shape: "center", weight: 1 };
+
+  /**
+   * 同点解消の振幅。格子上では等距離のセルが大量に生じるため、ここを固定順に
+   * すると近傍列挙順（＝方位）が参考上限側にも紛れ込む。DFS-N と同じく乱数で解く。
+   */
+  const GREEDY_EPSILON = 1e-6;
+
   // ---------------------------------------------------------------------------
   // 2. 幾何 — 方位角と報酬領域
   // ---------------------------------------------------------------------------
@@ -368,25 +397,61 @@
     });
   }
 
+  /** Greedy-領域のパラメータを既定値で埋め、範囲外を丸める。 */
+  function normaliseGreedy(opts = {}) {
+    const metric = GREEDY_METRICS[opts.metric] ? opts.metric : GREEDY_DEFAULTS.metric;
+    const shape = GREEDY_SHAPES[opts.shape] ? opts.shape : GREEDY_DEFAULTS.shape;
+    const raw = Number(opts.weight);
+    const weight = Number.isFinite(raw) ? A.clamp(raw, 0, 1) : GREEDY_DEFAULTS.weight;
+    return { metric, shape, weight };
+  }
+
+  /** 表・凡例・CSV で使う短い設定表記。例: 「L1・中心基準・w=1.00」 */
+  function greedyLabel(opts) {
+    const g = normaliseGreedy(opts);
+    return `${GREEDY_METRICS[g.metric].short}・${GREEDY_SHAPES[g.shape].short}・w=${g.weight.toFixed(2)}`;
+  }
+
   /**
-   * Greedy-領域: 領域中心へのマンハッタン距離を優先度とする最良優先探索。
-   * DFS-N と同じ事前情報を使い切った場合の参考線（提案手法を上回りうる）。
+   * Greedy-領域（参考上限）: 領域の事前情報だけを見る重み付き最良優先探索。
+   *
+   *   h(n) = d_metric(n, 中心)                      … shape = "center"
+   *        = max(0, d_metric(n, 中心) − r)          … shape = "boundary"
+   *   g(n) = 発見時の探索木の深さ（スタートからの辺数）
+   *   f(n) = (1 − w)·g(n) + w·h(n) + ε·U(0,1)      … f 小 = 先に展開
+   *
+   * w は「貪欲さ」。w=1 で純粋な最良優先（領域へ一直線）、w=0 で一様コスト探索
+   * となり BFS と一致する。すなわち BFS と Greedy-領域は同じ族の両端であり、
+   * 参考上限の強さを連続的に動かして DFS-N の位置づけを測れる。
+   *
+   * 重要な制約: 報酬セルの実座標は参照しない。DFS-N に与えた事前情報（領域の
+   * 中心と半径）だけを、より直接的な形で使う。だからこそ「同じ情報を使い切った
+   * 場合の参考線」として読める。各セルは 1 回だけ展開し、再展開はしない。
    */
-  function orderGreedy(start, region) {
+  function orderGreedy(start, region, opts = {}) {
+    const { metric, shape, weight } = normaliseGreedy(opts);
+    const dist = GREEDY_METRICS[metric].fn;
+    const rand = A.makeRng((opts.seed || 1) >>> 0);
+    const heuristic = (p) => {
+      const d = dist(p.x - region.cx, p.y - region.cy);
+      return shape === "boundary" ? Math.max(0, d - region.r) : d;
+    };
+    const priority = (p, depth) =>
+      (1 - weight) * depth + weight * heuristic(p) + GREEDY_EPSILON * rand();
+
     const heap = new A.MinHeap();
     const seen = new Set([A.posKey(start)]);
-    const score = (p) => Math.abs(p.x - region.cx) + Math.abs(p.y - region.cy);
-    heap.push({ priority: score(start), pos: start });
+    heap.push({ priority: priority(start, 0), pos: start, depth: 0 });
     const order = [];
 
     while (heap.size > 0) {
-      const cur = heap.pop().pos;
-      order.push(A.posKey(cur));
-      for (const nb of A.getNeighbors(cur)) {
+      const cur = heap.pop();
+      order.push(A.posKey(cur.pos));
+      for (const nb of A.getNeighbors(cur.pos)) {
         const key = A.posKey(nb);
         if (!seen.has(key)) {
           seen.add(key);
-          heap.push({ priority: score(nb), pos: nb });
+          heap.push({ priority: priority(nb, cur.depth + 1), pos: nb, depth: cur.depth + 1 });
         }
       }
     }
@@ -399,7 +464,7 @@
     if (name === "bfs") return orderBfs(start);
     if (name === "dfs") return orderDfs(start, seed);
     if (name === "dfsn") return orderDfsN(start, ctx.biasDegrees, seed);
-    if (name === "greedy") return orderGreedy(start, ctx.region);
+    if (name === "greedy") return orderGreedy(start, ctx.region, { ...ctx.greedy, seed });
     throw new Error(`unknown algorithm: ${name}`);
   }
 
@@ -508,6 +573,7 @@
         const order = runOrder(name, trial.start, {
           biasDegrees: cfg.biasDegrees,
           region: trial.region,
+          greedy: cfg.greedy,
           seed,
         });
         out[name] = { order, metrics: evaluate(order, trial.rewards) };
@@ -523,6 +589,7 @@
       rewards: trial.rewards,
       rewardMeta: trial.rewardMeta,
       bearing: regionBearing(trial.start, trial.region),
+      greedy: normaliseGreedy(cfg.greedy),
       results,
     };
   }
@@ -550,6 +617,7 @@
           const order = runOrder(name, trial.start, {
             biasDegrees: 0,
             region: trial.region,
+            greedy: cfg.greedy,
             seed,
           });
           baselines[name].push(evaluate(order, trial.rewards).nAUC);
@@ -573,6 +641,7 @@
         Object.entries(baselines).map(([k, v]) => [k, meanSd(v)]),
       ),
       bearing: bearingStats.mean,
+      greedy: normaliseGreedy(cfg.greedy),
       seeds: seeds.slice(),
     };
   }
@@ -935,7 +1004,14 @@
   // ---------------------------------------------------------------------------
 
   function sweepToCsv(sweep) {
-    const lines = ["angle_deg,gap_to_region_deg,mean_nauc,sd_nauc,n"];
+    // 先頭に設定のメタ行（# 始まり）を置く。表計算・pandas いずれもコメント行として
+    // 読み飛ばせて、CSV だけ渡されても参考上限の条件が復元できる。
+    const g = normaliseGreedy(sweep.greedy);
+    const lines = [
+      `# trials=${sweep.seeds ? sweep.seeds.length : ""}`,
+      `# greedy_metric=${g.metric},greedy_shape=${g.shape},greedy_weight=${g.weight.toFixed(2)}`,
+      "angle_deg,gap_to_region_deg,mean_nauc,sd_nauc,n",
+    ];
     for (const p of sweep.points) {
       lines.push(
         [p.deg, p.gap.toFixed(2), p.mean.toFixed(6), p.sd.toFixed(6), p.n].join(","),
@@ -978,6 +1054,11 @@
     ALGO_STYLE,
     ALGO_ORDER,
     MM_STYLE,
+    GREEDY_METRICS,
+    GREEDY_SHAPES,
+    GREEDY_DEFAULTS,
+    normaliseGreedy,
+    greedyLabel,
     biasVector,
     vectorAngle,
     angleGap,
@@ -1080,6 +1161,11 @@
     bias: el("labBias"),
     biasOut: el("labBiasValue"),
     matchButton: el("labMatchButton"),
+    greedyWeight: el("labGreedyWeight"),
+    greedyWeightOut: el("labGreedyWeightValue"),
+    greedyMetric: el("labGreedyMetric"),
+    greedyShape: el("labGreedyShape"),
+    greedyResetButton: el("labGreedyResetButton"),
     heatSelect: el("labHeatSelect"),
     runButton: el("labRunButton"),
     sweepSeeds: el("labSweepSeeds"),
@@ -1137,6 +1223,11 @@
         rPct: Number(ui.radius.value),
       },
       biasDegrees: Number(ui.bias.value),
+      greedy: normaliseGreedy({
+        metric: ui.greedyMetric ? ui.greedyMetric.value : GREEDY_DEFAULTS.metric,
+        shape: ui.greedyShape ? ui.greedyShape.value : GREEDY_DEFAULTS.shape,
+        weight: ui.greedyWeight ? Number(ui.greedyWeight.value) : GREEDY_DEFAULTS.weight,
+      }),
       lambda: Number(ui.mmLambda.value),
       goalPlacement: ui.goalPlacement.value,
       algorithms: ALGO_ORDER,
@@ -1639,13 +1730,20 @@
       ? single.results.bfs.metrics.span
       : Object.values(single.results)[0].metrics.span;
 
+    // Greedy 行だけは設定（距離・領域の使い方・貪欲度）を見出しに出す。参考上限の
+    // 強さはパラメータ次第で変わるため、数値と設定は必ずセットで読む必要がある。
+    const label = (name) =>
+      name === "greedy"
+        ? `${ALGO_STYLE.greedy.label}<br><span class="sd">${greedyLabel(single.greedy)}</span>`
+        : ALGO_STYLE[name].label;
+
     const rows = ALGO_ORDER.filter((n) => single.results[n]).map((name) => {
       const m = single.results[name].metrics;
       const rel = single.results.bfs
         ? m.nAUC / single.results.bfs.metrics.nAUC - 1
         : 0;
       return `<tr>
-        <th scope="row"><span class="swatch" style="background:${ALGO_STYLE[name].color}"></span>${ALGO_STYLE[name].label}</th>
+        <th scope="row"><span class="swatch" style="background:${ALGO_STYLE[name].color}"></span>${label(name)}</th>
         <td class="num">${m.nAUC.toFixed(4)}</td>
         <td class="num ${rel > 0 ? "good" : rel < 0 ? "bad" : ""}">${single.results.bfs ? `${rel >= 0 ? "+" : ""}${(rel * 100).toFixed(1)}%` : "—"}</td>
         <td class="num">${fmtPct(m.costFirst / span)}</td>
@@ -1847,6 +1945,7 @@
           Object.entries(baselines).map(([k, v]) => [k, meanSd(v)]),
         ),
         bearing: bearingStats.mean,
+        greedy: cfg.greedy,
         seeds: seeds.slice(0, done),
       };
       drawPolarChart();
@@ -1883,7 +1982,7 @@
           <tr><th scope="row">DFS-N 最悪 ${worst.deg}°（ずれ ${worst.gap.toFixed(0)}°）</th><td class="num">${worst.mean.toFixed(4)}</td><td class="num">${worst.sd.toFixed(4)}</td><td class="num ${worst.mean < bfs.mean ? "bad" : ""}">${rel(worst.mean / bfs.mean - 1)}</td><td class="num ${worst.mean < dfs.mean ? "bad" : ""}">${rel(worst.mean / dfs.mean - 1)}</td></tr>
           <tr><th scope="row">BFS（幅優先の対照）</th><td class="num">${bfs.mean.toFixed(4)}</td><td class="num">${bfs.sd.toFixed(4)}</td><td class="num">—</td><td class="num">${rel(bfs.mean / dfs.mean - 1)}</td></tr>
           <tr><th scope="row">DFS（等方・順序ランダム）</th><td class="num">${dfs.mean.toFixed(4)}</td><td class="num">${dfs.sd.toFixed(4)}</td><td class="num">${rel(dfs.mean / bfs.mean - 1)}</td><td class="num">—</td></tr>
-          <tr><th scope="row">Greedy-領域（参考上限）</th><td class="num">${sweep.baselines.greedy.mean.toFixed(4)}</td><td class="num">${sweep.baselines.greedy.sd.toFixed(4)}</td><td class="num">${rel(sweep.baselines.greedy.mean / bfs.mean - 1)}</td><td class="num">${rel(sweep.baselines.greedy.mean / dfs.mean - 1)}</td></tr>
+          <tr><th scope="row">Greedy-領域（参考上限）<br><span class="sd">${greedyLabel(sweep.greedy)}</span></th><td class="num">${sweep.baselines.greedy.mean.toFixed(4)}</td><td class="num">${sweep.baselines.greedy.sd.toFixed(4)}</td><td class="num">${rel(sweep.baselines.greedy.mean / bfs.mean - 1)}</td><td class="num">${rel(sweep.baselines.greedy.mean / dfs.mean - 1)}</td></tr>
         </tbody>
       </table>
       <p class="field-help"><strong>効果の切り分け</strong>: ${sweep.points.length} 方位のうち ${winsBfs} 方位が BFS を、${winsDfs} 方位が等方 DFS を上回りました。
@@ -1998,6 +2097,7 @@
     syncOutput(ui.radius, ui.radiusOut, (v) => `${v}%`);
     syncOutput(ui.bias, ui.biasOut, (v) => `${v}°`);
     syncOutput(ui.mmLambda, ui.mmLambdaOut, (v) => Number(v).toFixed(1));
+    syncOutput(ui.greedyWeight, ui.greedyWeightOut, (v) => Number(v).toFixed(2));
 
     ui.runButton.addEventListener("click", runSingleTrial);
     ui.sweepButton.addEventListener("click", runSweepAction);
@@ -2034,11 +2134,33 @@
       });
       input.addEventListener("change", runSingleTrial);
     });
-    [ui.size, ui.braid, ui.seed, ui.startMode, ui.rewardCount, ui.concentration].forEach(
-      (input) => {
-        if (input) input.addEventListener("change", runSingleTrial);
-      },
-    );
+    [
+      ui.size,
+      ui.braid,
+      ui.seed,
+      ui.startMode,
+      ui.rewardCount,
+      ui.concentration,
+      ui.greedyMetric,
+      ui.greedyShape,
+      ui.greedyWeight,
+    ].forEach((input) => {
+      if (input) input.addEventListener("change", runSingleTrial);
+    });
+
+    // Greedy-領域を既定（L1・中心基準・w=1.00）へ戻す。参考上限をいじった後に
+    // 論文どおりの条件へ一手で復帰できるようにしておく。
+    if (ui.greedyResetButton) {
+      ui.greedyResetButton.addEventListener("click", () => {
+        if (ui.greedyMetric) ui.greedyMetric.value = GREEDY_DEFAULTS.metric;
+        if (ui.greedyShape) ui.greedyShape.value = GREEDY_DEFAULTS.shape;
+        if (ui.greedyWeight) {
+          ui.greedyWeight.value = String(GREEDY_DEFAULTS.weight);
+          ui.greedyWeight.dispatchEvent(new Event("input"));
+        }
+        runSingleTrial();
+      });
+    }
 
     // 領域プリセット（右上・右下など）
     ui.presets.forEach((button) => {

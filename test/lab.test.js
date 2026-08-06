@@ -55,6 +55,27 @@ function mean(values) {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
+/** BFS 展開順から、そのセルのスタートからの距離（層番号）を復元する。 */
+function bfsDistance(bfsOrder, key) {
+  if (!bfsDistance.cache || bfsDistance.cache.order !== bfsOrder) {
+    const depth = new Map();
+    for (const k of bfsOrder) {
+      const p = app.posFromKey(k);
+      const parent = [
+        `${p.x - 1},${p.y},${p.z}`,
+        `${p.x + 1},${p.y},${p.z}`,
+        `${p.x},${p.y - 1},${p.z}`,
+        `${p.x},${p.y + 1},${p.z}`,
+      ]
+        .filter((n) => depth.has(n))
+        .map((n) => depth.get(n));
+      depth.set(k, parent.length === 0 ? 0 : Math.min(...parent) + 1);
+    }
+    bfsDistance.cache = { order: bfsOrder, depth };
+  }
+  return bfsDistance.cache.depth.get(key);
+}
+
 // --- 1. 幾何 -----------------------------------------------------------------
 
 test("方位角は数学慣習（0°=右, 90°=上）で、y 下向きグリッドへ正しく変換される", () => {
@@ -203,6 +224,95 @@ test("BFS の展開順はスタートからの距離について単調", () => {
     assert.ok(d >= previous, "距離が減ることはない");
     previous = d;
   }
+});
+
+test("Greedy-領域（w=1）はまず領域中心へ一直線に伸びる", () => {
+  const field = openField(9);
+  const start = { x: 4, y: 4, z: 0 };
+  const region = { cx: 8, cy: 0, r: 2 };
+  const h = (p) => Math.abs(p.x - region.cx) + Math.abs(p.y - region.cy);
+  const order = lab.withMaze(field, () =>
+    lab.orderGreedy(start, region, { metric: "l1", shape: "center", weight: 1, seed: 3 }),
+  );
+
+  assert.equal(order.length, 81, "全セルを展開する");
+  // 純粋な貪欲なので、中心に着くまでの展開は h が 1 ずつ減る最短の伸び方になる。
+  const head = order.slice(0, h(start) + 1).map((key) => h(app.posFromKey(key)));
+  assert.deepEqual(head, [8, 7, 6, 5, 4, 3, 2, 1, 0], "中心へ着くまで h が単調に減る");
+});
+
+test("Greedy-領域は w=0 で BFS と一致する（同族の両端）", () => {
+  const maze = lab.generateLabMaze({ seed: 7, width: 21, height: 21, braid: 0 });
+  const region = lab.resolveRegion(21, 21, { cxPct: 80, cyPct: 20, rPct: 22 });
+  const start = lab.resolveStart(maze, "center");
+
+  lab.withMaze(maze, () => {
+    const greedy0 = lab.orderGreedy(start, region, { weight: 0, seed: 5 });
+    const bfs = lab.orderBfs(start);
+
+    // 同点の並びは ε 乱数で変わるため、順序そのものではなく BFS の不変量
+    // （スタートからの距離が単調非減少）で一致を確かめる。
+    const depth = new Map();
+    bfs.forEach((key, i) => depth.set(key, i));
+    let previous = -1;
+    for (const key of greedy0) {
+      const d = bfsDistance(bfs, key);
+      assert.ok(d >= previous, "w=0 ではスタートからの距離が減らない（＝BFS 相当）");
+      previous = d;
+    }
+    assert.equal(greedy0.length, bfs.length, "展開するセル数は BFS と同じ");
+  });
+});
+
+test("Greedy-領域は距離・領域の使い方・貪欲度で展開順が変わり、同じ設定なら再現する", () => {
+  const maze = lab.generateLabMaze({ seed: 11, width: 21, height: 21, braid: 0 });
+  const region = lab.resolveRegion(21, 21, { cxPct: 80, cyPct: 20, rPct: 22 });
+  const start = lab.resolveStart(maze, "center");
+
+  lab.withMaze(maze, () => {
+    const base = { metric: "l1", shape: "center", weight: 1, seed: 9 };
+    const a = lab.orderGreedy(start, region, base);
+    const again = lab.orderGreedy(start, region, base);
+    assert.deepEqual(a, again, "同じ設定・同じシードなら同じ展開順");
+
+    const variants = {
+      l2: lab.orderGreedy(start, region, { ...base, metric: "l2" }),
+      linf: lab.orderGreedy(start, region, { ...base, metric: "linf" }),
+      boundary: lab.orderGreedy(start, region, { ...base, shape: "boundary" }),
+      half: lab.orderGreedy(start, region, { ...base, weight: 0.5 }),
+    };
+    for (const [name, order] of Object.entries(variants)) {
+      assert.equal(order.length, a.length, `${name}: 展開セル数は変わらない`);
+      assert.notDeepEqual(order, a, `${name}: 展開順は既定と異なる`);
+    }
+  });
+});
+
+test("Greedy-領域は同点を乱数で解き、方位に固定されない", () => {
+  // 中心が start と等距離になる 4 セルを持つ配置にすると、同点解消が固定順か
+  // どうかがそのまま最初の一歩に出る。
+  const field = openField(21);
+  const start = { x: 10, y: 10, z: 0 };
+  const region = { cx: 10, cy: 10, r: 0 };
+
+  const firstMoves = new Set();
+  for (let seed = 1; seed <= 60; seed += 1) {
+    firstMoves.add(
+      lab.withMaze(field, () =>
+        lab.orderGreedy(start, region, { weight: 1, seed })[1],
+      ),
+    );
+  }
+  assert.equal(firstMoves.size, 4, "上下左右すべてが最初の一歩になりうる");
+});
+
+test("normaliseGreedy は不正値・範囲外を既定へ丸める", () => {
+  assert.deepEqual(lab.normaliseGreedy(), lab.GREEDY_DEFAULTS);
+  assert.deepEqual(lab.normaliseGreedy({ metric: "l9", shape: "x", weight: "abc" }), lab.GREEDY_DEFAULTS);
+  assert.equal(lab.normaliseGreedy({ weight: 2 }).weight, 1);
+  assert.equal(lab.normaliseGreedy({ weight: -1 }).weight, 0);
+  assert.equal(lab.normaliseGreedy({ metric: "linf" }).metric, "linf");
+  assert.match(lab.greedyLabel({ metric: "l2", shape: "boundary", weight: 0.5 }), /L2・縁基準・w=0\.50/);
 });
 
 test("全ての手法が到達可能な通路セルを漏れなく 1 回ずつ展開する", () => {
@@ -490,8 +600,11 @@ test("CSV 出力はヘッダと行数が整合する", () => {
   const cfg = baseConfig();
   const sweep = lab.biasSweep(cfg, seeds(2), [0, 90, 180, 270]);
   const csv = lab.sweepToCsv(sweep).split("\n");
-  assert.equal(csv[0], "angle_deg,gap_to_region_deg,mean_nauc,sd_nauc,n");
-  assert.equal(csv.length, 1 + 4 + 3, "4 方位 + 3 ベースライン");
+  const meta = csv.filter((line) => line.startsWith("#"));
+  assert.equal(meta.length, 2, "設定のメタ行が先頭に付く");
+  assert.match(meta[1], /greedy_metric=l1,greedy_shape=center,greedy_weight=1\.00/);
+  assert.equal(csv[2], "angle_deg,gap_to_region_deg,mean_nauc,sd_nauc,n");
+  assert.equal(csv.length, 2 + 1 + 4 + 3, "メタ 2 行 + ヘッダ + 4 方位 + 3 ベースライン");
 
   const study = lab.microMouseStudy(cfg, seeds(2));
   const mmCsv = lab.mmToCsv(study).split("\n");

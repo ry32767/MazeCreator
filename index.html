@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Maze Solver</title>
     <meta name="description" content="迷路生成と迷路解法アルゴリズムをブラウザで可視化するアプリ">
-    <link rel="stylesheet" href="styles.css?v=20260806-trials">
+    <link rel="stylesheet" href="styles.css?v=20260806-greedy">
   </head>
   <body>
     <nav class="tabbar" aria-label="機能の切り替え">
@@ -357,7 +357,38 @@
           </section>
 
           <section class="panel-block">
-            <p class="block-title">④ 実行</p>
+            <p class="block-title">④ Greedy-領域（参考上限）</p>
+            <div class="field-row">
+              <label for="labGreedyWeight">貪欲度 w <output id="labGreedyWeightValue">1.00</output></label>
+              <input id="labGreedyWeight" type="range" min="0" max="1" step="0.05" value="1"
+                     aria-describedby="labGreedyHelp">
+            </div>
+            <div class="field-row">
+              <label for="labGreedyMetric">距離の測り方</label>
+              <select id="labGreedyMetric">
+                <option value="l1" selected>マンハッタン L1（既定）</option>
+                <option value="l2">ユークリッド L2</option>
+                <option value="linf">チェビシェフ L∞</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="labGreedyShape">領域の使い方</label>
+              <select id="labGreedyShape">
+                <option value="center" selected>中心までの距離</option>
+                <option value="boundary">縁までの距離（内側は 0）</option>
+              </select>
+            </div>
+            <p id="labGreedyHelp" class="field-help">
+              優先度 <code>f(n) = (1−w)·g(n) + w·h(n)</code> の最良優先探索。
+              <strong>w=1</strong> は純粋な貪欲（領域へ一直線）、<strong>w=0</strong> は BFS と一致します。
+              参考上限の強さを連続的に動かして DFS-N の位置づけを測るためのパラメータです。
+              定義の全文は下の「Greedy-領域の定義」を参照してください。
+            </p>
+            <button id="labGreedyResetButton" type="button" class="compare-button">既定値に戻す（L1・中心・w=1）</button>
+          </section>
+
+          <section class="panel-block">
+            <p class="block-title">⑤ 実行</p>
             <div class="field-row">
               <label for="labHeatSelect">迷路の塗り</label>
               <select id="labHeatSelect">
@@ -447,6 +478,100 @@
         <div id="labMmTable" class="lab-table-wrap"></div>
 
         <details class="lab-notes">
+          <summary>Greedy-領域の定義（アルゴリズム詳細とパラメータ）</summary>
+
+          <p><strong>位置づけ</strong>：提案手法ではなく<strong>参考上限（reference upper bound）</strong>です。
+          DFS-N に与えたのと<em>同じ事前情報だけ</em>——報酬領域 R の中心 <code>c</code> と半径 <code>r</code>——を、
+          方位バイアスという間接的な形ではなく距離場として直接使ったらどこまで行けるか、を示します。
+          <strong>個々の報酬セルの座標は参照しません</strong>。参照すれば巡回セールスマン的な真の上界になりますが、
+          それは DFS-N と同じ情報量ではなくなり、比較として成立しません。</p>
+
+          <p><strong>定義</strong>：優先度付きキュー（二分ヒープ）による重み付き最良優先探索です。
+          セル <code>n</code> の優先度を次で決め、値の小さいものから展開します。</p>
+
+          <pre><code>h(n) = d(n, c)                     … 領域の使い方 = 中心までの距離
+h(n) = max(0, d(n, c) − r)         … 領域の使い方 = 縁までの距離（R の内側は 0）
+g(n) = 発見時の探索木の深さ（スタートからの辺数）
+f(n) = (1 − w)·g(n) + w·h(n) + ε·U(0,1),   ε = 1e−6</code></pre>
+
+          <pre><code>open ← MinHeap{(f(start), start, depth=0)};  seen ← {start};  order ← []
+while open ≠ ∅:
+    (_, v, depth) ← open.pop()          # f 最小のセルを取り出す
+    order.append(v)                     # ← これが「展開順」＝コスト単位
+    for u in neighbors(v):              # 壁で遮られていない 4 近傍
+        if u ∉ seen:
+            seen.add(u)                 # 各セルは 1 回だけキューに入る
+            open.push((f(u, depth+1), u, depth+1))
+return order</code></pre>
+
+          <div class="lab-table-wrap">
+          <table class="lab-table">
+            <caption>Greedy-領域のパラメータ</caption>
+            <thead><tr>
+              <th scope="col">パラメータ</th><th scope="col">値域</th><th scope="col">既定</th><th scope="col">意味と使いどころ</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row">貪欲度 <code>w</code></th>
+                <td>0.00 – 1.00</td>
+                <td>1.00</td>
+                <td><code>w=1</code> は純粋な貪欲最良優先（領域へ一直線に伸び、外側は後回し）。
+                  <code>w=0</code> は一様コスト探索となり <strong>BFS と一致</strong>します。
+                  つまり BFS と Greedy-領域は同じ族の両端であり、<code>w</code> を振ると
+                  「事前情報をどれだけ強く使うか」の連続軸上で DFS-N の位置を測れます。</td>
+              </tr>
+              <tr>
+                <th scope="row">距離 <code>d</code></th>
+                <td>L1 / L2 / L∞</td>
+                <td>L1</td>
+                <td>4 近傍格子の障害物なし空間ではグラフ距離が L1 に一致するため、L1 が既定
+                  （無矛盾なヒューリスティック）。L2・L∞ は L1 を下から押さえる楽観的な指標で、
+                  等距離集合の形が菱形・円・正方形と変わります。ヒューリスティックの形が
+                  結果にどれだけ効くかの感度分析に使ってください。</td>
+              </tr>
+              <tr>
+                <th scope="row">領域の使い方</th>
+                <td>中心 / 縁</td>
+                <td>中心</td>
+                <td>「縁」は <code>max(0, d − r)</code>、すなわち R の内側を一律 0 とする台地型で、
+                  マイクロマウス側の誘導項 <code>λ·max(0, |cell − c| − r)</code> と同形です。
+                  全知探索と未知環境の実験で事前情報の埋め込み方を揃えたいときに選びます。
+                  ただし R 内が同点になるため、<code>w=1</code> だと領域内の順序が
+                  ほぼ同点解消の乱数任せになります（<code>w</code> を少し下げると領域内が BFS 的になります）。</td>
+              </tr>
+              <tr>
+                <th scope="row">同点解消 <code>ε</code></th>
+                <td>固定 1e−6</td>
+                <td>—</td>
+                <td>格子上では等距離のセルが大量に生じます。同点を固定順で解くと近傍の
+                  列挙順（＝特定の方位）が参考上限側に紛れ込むため、試行シードで再現可能な
+                  一様乱数で解きます。DFS-N・等方 DFS と同じ扱いです。</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+
+          <p><strong>性質</strong></p>
+          <ul>
+            <li><strong>完全性</strong>：到達可能な通路セルを重複なくちょうど 1 回ずつ展開します（<code>w</code> によらず）。
+              したがって回収曲線は必ず 100% に到達し、nAUC は同じ分母で BFS・DFS・DFS-N と比較できます。</li>
+            <li><strong>再展開なし</strong>：<code>g</code> は「最初に発見したときの深さ」で、A* のような
+              経路コストの更新（decrease-key）は行いません。本実験のコスト単位が<strong>展開順</strong>であり、
+              同じセルを二度数えないためです。<code>0&lt;w&lt;1</code> では <code>g</code> は真の最短距離の上界になりえます。</li>
+            <li><strong>最短経路は保証しません</strong>。得られるのは展開順であって経路ではありません。</li>
+            <li><strong>物理的に実現できません</strong>：BFS 同様、展開順は単一エージェントの移動軌跡ではないため、
+              マイクロマウスの実移動歩数（図3）とは単位が異なり直接比較できません。</li>
+            <li><strong>計算量</strong>：セル数 N に対し時間 O(N log N)、空間 O(N)。</li>
+            <li><strong>事前情報が誤っていれば最悪手</strong>：領域に報酬が無い（集中率 0%）条件では、
+              領域へ一直線に伸びる分だけ BFS より悪化しえます。集中率スライダーで確認できます。</li>
+          </ul>
+
+          <p><strong>報告するときは</strong>、<code>w</code>・距離・領域の使い方の 3 つを必ず併記してください
+          （表1・表3 の行見出しと、スイープ CSV 先頭の <code>#</code> メタ行に同じ値が入っています）。
+          既定は「L1・中心基準・w=1.00」です。</p>
+        </details>
+
+        <details class="lab-notes">
           <summary>この実験の読み方と限界</summary>
           <ul>
             <li><strong>コスト単位</strong>: 全知探索（BFS/DFS/DFS-N/Greedy）は「展開セル数」、マイクロマウスは「実移動歩数」。
@@ -454,8 +579,10 @@
             <li><strong>nAUC</strong>: 回収曲線の下面積（0〜1）。大きいほど早く回収したことを意味します。
               単一しきい値（50% 到達など）より配置のゆらぎに強く、複数シードの平均比較に向きます。</li>
             <li><strong>DFS-N は最短経路を保証しません</strong>。本実験が問うのは報酬回収の早さだけです。</li>
-            <li><strong>Greedy-領域は参考上限</strong>。DFS-N と同じ事前情報をより直接的に使うため、
-              DFS-N を上回ることがあります。提案の主張は「BFS より良い」であって「最良である」ではありません。</li>
+            <li><strong>Greedy-領域は参考上限</strong>。DFS-N と同じ事前情報（領域の中心と半径のみ。個々の報酬座標は見ません）を
+              より直接的に使うため、DFS-N を上回ることがあります。提案の主張は「BFS より良い」であって「最良である」ではありません。
+              その強さは貪欲度 <code>w</code>・距離・領域の使い方で変わるので、数値は必ず設定とセットで報告してください
+              （定義は上の「Greedy-領域の定義」）。</li>
             <li><strong>事前情報が誤っていれば誘導は逆効果</strong>。「ゴール配置: 領域外」で実際に測れます。</li>
             <li>迷路は 1 階層（2D）固定です。多階層の可視化は「迷路ソルバー」タブを使ってください。</li>
           </ul>
@@ -463,7 +590,7 @@
       </section>
     </div><!-- /#panelLab -->
 
-    <script src="app.js?v=20260806-trials"></script>
-    <script src="lab.js?v=20260806-trials"></script>
+    <script src="app.js?v=20260806-greedy"></script>
+    <script src="lab.js?v=20260806-greedy"></script>
   </body>
 </html>
